@@ -1,6 +1,7 @@
 ;----- Assembler Directives ----------------------------------------------------
 .p816                           ; tell the assembler this is 65816 code
-.smart ; keep track of registers widths
+.A8
+.I16
 ;-------------------------------------------------------------------------------
 
 ;----- Includes ----------------------------------------------------------------
@@ -23,70 +24,124 @@
 ;-------------------------------------------------------------------------------
 .proc   GameLoop
         wai                     ; wait for NMI / V-Blank
-	jsr GetJoypadInput
-	lda JOYHELD1
-	and #BUTTON_A ; filter highest bit; corresponds to A button
-	cpa #BUTTON_A
-	bne GameLoop ; stall unless button A is pressed
-	sep #$20 ; keeping track of regs is hard D:
-HorUpdate:
-	lda HOR_SPEED
-	bpl CheckRightBounds
-CheckLeftBounds:
-	lda OAMMIRROR
-	clc
-	adc HOR_SPEED
-	bcs UpdateHorPos ; branch if we be underflowin
-	    stz OAMMIRROR
-	    bra InvertHorSpeed
-CheckRightBounds:
-	lda OAMMIRROR
-	clc
-	adc HOR_SPEED
-	cmp #(SCREEN_RIGHT - 2 * SPRITE_SIZE)
-	bcc UpdateHorPos ; if we at place...
-	    lda #(SCREEN_RIGHT - 2 * SPRITE_SIZE)
-	    sta OAMMIRROR
-	    bra InvertHorSpeed
-UpdateHorPos:
-	sta OAMMIRROR
-	bra VerUpdate
-InvertHorSpeed:
-	lda HOR_SPEED
-	eor #$ff
-	inc
-	sta HOR_SPEED
-	bra VerUpdate
+.A16
+	rep #$20 ; set to 16 bit mode
 
-VerUpdate:
-	lda VER_SPEED
-	bpl CheckUpBounds
-CheckDownBounds:
-	lda OAMMIRROR + $01
+	tsx
+	pea JOYHELD1
+	pea JOYTRIGGER1
+	pea JOYPAD1
+	jsr GetJoypad1
+	txs
+
+	.byte $42, $00 ; breakpoint
+
+	; here we skip everything if neither left nor right is pressed
+	lda JOYPAD1
+	and #(BUTTON_LEFT + BUTTON_RIGHT)
+	cmp #$0000
+.A8
+	sep #$20
+	bne CheckLeft
+		; we slow down and skip to UpdateHor if no buttons are pressed
+		lda HOR_SPEED
+		cmp #$00
+		beq CheckB ; if we're at zero speed, move nowhere
+		lda HOR_SPEED
+		cmp #$00
+		bpl PositiveSpeed
+	NegativeSpeed:
+		inc
+		sta HOR_SPEED
+		bra UpdateHor
+	PositiveSpeed:
+		dec
+		sta HOR_SPEED
+		bra UpdateHor
+
+CheckLeft:
+.A16
+	rep #$20 ; set to 16 bit mode
+	lda JOYPAD1
+	and #BUTTON_LEFT ; filter highest bit; corresponds to A button
+	cpa #BUTTON_LEFT
+.A8 ; we buggin this now
+	sep #$20
+	bne NoLeft ; stall unless button A is pressed
+		lda HOR_SPEED ; load horizontal speed
+		dec ; slow down
+		eor #$ff ; negate
+		inc
+		cpa #SPRITE_SPEED ; compare to max speed
+		beq UpdateHor ; if equal, continue
+			lda HOR_SPEED ; load horizontal speed
+			dec ; slow down
+			sta HOR_SPEED
+			bra UpdateHor
+NoLeft:
+CheckRight:
+.A16
+	rep #$20
+	lda JOYPAD1
+	and #BUTTON_RIGHT ; filter highest bit; corresponds to A button
+	cpa #BUTTON_RIGHT
+.A8 ; we buggin this now
+	sep #$20
+	bne UpdateHor ; stall unless button A is pressed
+		lda HOR_SPEED ; load horizontal speed
+		inc ; slow down
+		cpa #SPRITE_SPEED ; compare to max speed
+		beq UpdateHor ; if equal, continue
+			sta HOR_SPEED
+			bra UpdateHor
+UpdateHor:
+	lda OAMMIRROR
 	clc
-	adc VER_SPEED
-	bcs UpdateVerPos ; branch if we be underflowin
-	    stz OAMMIRROR + $01
-	    bra InvertVerSpeed
-CheckUpBounds:
-	lda OAMMIRROR + $01
-	clc
-	adc VER_SPEED
-	cmp #(SCREEN_BOTTOM - 2 * SPRITE_SIZE)
-	bcc UpdateVerPos ; if we at place...
-	    lda #(SCREEN_BOTTOM - 2 * SPRITE_SIZE)
-	    sta OAMMIRROR + $01
-	    bra InvertVerSpeed
-UpdateVerPos:
+	adc HOR_SPEED
+	sta OAMMIRROR
+CheckB:
+	lda #$01
+	cmp GROUNDED
+	bne Falling
+.A16
+	rep #$20
+	lda JOYPAD1
+	and #BUTTON_B ; filter highest bit; corresponds to A button
+	cpa #BUTTON_B
+.A8 ; we buggin this now
+	sep #$20
+	bne Falling ; stall unless button A is pressed
+		lda #JUMP_SPEED
+		sta VER_SPEED
+Falling:
+	lda OAMMIRROR + $01 ; get y pos of sprite
+	clc ; clear carry
+	sbc VER_SPEED ; subtract height of sprite
+	cmp #(SCREEN_BOTTOM - SPRITE_SIZE * 2 - 1) ; cmp with sprite height
+	bpl Grounded ; if we got sub carry, snap to ground
+		stz GROUNDED
+		sta OAMMIRROR + $01
+		lda VER_SPEED ; increase falling speed
+		cmp #(MAX_FALLING_SPEED)
+		beq Return
+		dec
+		sta VER_SPEED
+		bra Return ; otherwise, continue as normal
+Grounded:
+	lda #$01
+	sta GROUNDED
+	stz VER_SPEED
+	lda #(SCREEN_BOTTOM - SPRITE_SIZE * 2)
 	sta OAMMIRROR + $01
-	bra Return
-InvertVerSpeed:
-	lda VER_SPEED
-	eor #$ff
-	inc
-	sta VER_SPEED
+
+HorUpdate:
+UpdateHorPos:
+VerUpdate:
+UpdateVerPos:
 	bra Return
 Return:
+.A8 ; we buggin this now
+	sep #$20
 	; mirror pos of other sprites
 	lda OAMMIRROR
 	; store sprite below
@@ -100,11 +155,12 @@ Return:
 	lda OAMMIRROR + $01
 	; store sprite to right
 	sta OAMMIRROR + $05
-	; store right-most sprites
+	; store bottom-most sprites
 	clc
 	adc #$08
 	sta OAMMIRROR + $09
 	sta OAMMIRROR + $0d
+
 
         jmp GameLoop
 .endproc

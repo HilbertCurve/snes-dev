@@ -5,5 +5,5 @@
 .export ColorData
 
 .segment "SPRITEDATA"
-SpriteData: .incbin "assets/Sprite.vra"
-ColorData:  .incbin "assets/Sprite.pal"
+SpriteData: .incbin "assets/Madeline.vra"
+ColorData:  .incbin "assets/Madeline.pal"
